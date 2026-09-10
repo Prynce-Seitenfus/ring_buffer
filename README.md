@@ -6,9 +6,12 @@ A lightweight, lock-free Single-Producer Single-Consumer (SPSC) circular FIFO bu
 
 ## Key Features
 
-* **Lock-Free SPSC**: Requires no mutexes, semaphores, critical sections, or interrupt-disabling primitives. Safe for asynchronous Producer-Consumer contexts (e.g. high-priority ISR writing and background RTOS task reading).
-* **Zero Dynamic Allocation**: Operates entirely over a caller-provided static storage array.
+* **Lock-Free SPSC**: Requires no mutexes, semaphores, critical sections, or interrupt-disabling primitives. Safe for asynchronous Producer-Consumer contexts (e.g., high-priority ISR writing and background RTOS task reading).
+* **Zero Dynamic Allocation**: Operates entirely over a caller-provided static storage array (MISRA C:2012 Rule 21.3).
 * **Fast Bitwise Wrap-Around**: Buffer capacity is enforced as a power of 2, enabling $O(1)$ index wrap-around using bitwise AND (`& mask`) without division or modulo (`%`) instructions.
+* **Minimized Memory Footprint**: Struct contains only essential members (`buffer`, `mask`, `head`, `tail`), achieving 16-byte alignment with zero redundant fields.
+* **Inlined Zero-Cost Accessors**: Single-byte push, pop, inspection, and capacity calculations are defined as `static inline` directly in the header for maximum throughput.
+* **High-Speed Bulk Transfers**: Provides bulk `ring_buffer_write` and `ring_buffer_read` routines utilizing optimized block memory transfers and a single release barrier commit.
 * **Hardware-Agnostic Synchronization**: Built on a dedicated atomic abstraction layer ([`atomic.h`](../atomic/atomic.h)) using acquire/release memory fences.
 * **MISRA C:2012 Compliant**: Adheres strictly to MISRA C:2012 standards, including defensive parameter validation, unsigned integer literals, and explicit typing.
 
@@ -33,38 +36,56 @@ bool ring_buffer_init(RingBuffer* rb, uint8_t* buffer, size_t capacity);
  * Thread-safe for the single Producer context without locks.
  * @param rb Pointer to RingBuffer instance.
  * @param data Byte to write.
- * @return true if written, false if buffer is full.
+ * @return true if written, false if buffer is full or rb is NULL.
  */
-bool ring_buffer_push(RingBuffer* rb, uint8_t data);
+static inline bool ring_buffer_push(RingBuffer* rb, uint8_t data);
 
 /**
  * @brief Dequeues a single byte (Consumer API).
  * Thread-safe for the single Consumer context without locks.
  * @param rb Pointer to RingBuffer instance.
  * @param data Pointer to destination byte.
- * @return true if read, false if buffer is empty.
+ * @return true if read, false if buffer is empty or pointers are NULL.
  */
-bool ring_buffer_pop(RingBuffer* rb, uint8_t* data);
+static inline bool ring_buffer_pop(RingBuffer* rb, uint8_t* data);
 
 /**
  * @brief Checks if the buffer is empty.
  */
-bool ring_buffer_is_empty(const RingBuffer* rb);
+static inline bool ring_buffer_is_empty(const RingBuffer* rb);
 
 /**
  * @brief Checks if the buffer is full.
  */
-bool ring_buffer_is_full(const RingBuffer* rb);
+static inline bool ring_buffer_is_full(const RingBuffer* rb);
 
 /**
  * @brief Returns the number of bytes currently stored.
  */
-size_t ring_buffer_count(const RingBuffer* rb);
+static inline size_t ring_buffer_count(const RingBuffer* rb);
 
 /**
  * @brief Returns usable capacity (capacity - 1).
  */
-size_t ring_buffer_capacity(const RingBuffer* rb);
+static inline size_t ring_buffer_capacity(const RingBuffer* rb);
+
+/**
+ * @brief Enqueues a block of bytes (Producer Bulk API).
+ * @param rb Pointer to RingBuffer instance.
+ * @param data Pointer to source buffer.
+ * @param count Maximum number of bytes to enqueue.
+ * @return Actual number of bytes written.
+ */
+size_t ring_buffer_write(RingBuffer* rb, const uint8_t* data, size_t count);
+
+/**
+ * @brief Dequeues a block of bytes (Consumer Bulk API).
+ * @param rb Pointer to RingBuffer instance.
+ * @param data Pointer to destination buffer.
+ * @param count Maximum number of bytes to dequeue.
+ * @return Actual number of bytes read.
+ */
+size_t ring_buffer_read(RingBuffer* rb, uint8_t* data, size_t count);
 
 /**
  * @brief Resets head and tail to zero.

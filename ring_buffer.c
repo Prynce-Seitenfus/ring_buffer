@@ -1,4 +1,5 @@
 #include "ring_buffer.h"
+#include <string.h>
 
 /* Helper to check whether capacity is a non-zero power of 2 (>= 2) */
 static bool is_power_of_two(size_t value)
@@ -17,7 +18,6 @@ bool ring_buffer_init(RingBuffer* rb, uint8_t* buffer, size_t capacity)
     }
 
     rb->buffer = buffer;
-    rb->capacity = capacity;
     rb->mask = capacity - 1U;
     atomic_store_release(&rb->head, 0U);
     atomic_store_release(&rb->tail, 0U);
@@ -25,87 +25,74 @@ bool ring_buffer_init(RingBuffer* rb, uint8_t* buffer, size_t capacity)
     return true;
 }
 
-bool ring_buffer_push(RingBuffer* rb, uint8_t data)
+size_t ring_buffer_write(RingBuffer* rb, const uint8_t* data, size_t count)
 {
-    if (rb == NULL) {
-        return false;
+    if ((rb == NULL) || (data == NULL) || (count == 0U)) {
+        return 0U;
     }
 
-    size_t current_head = atomic_load_acquire(&rb->head);
+    size_t current_head = atomic_load_relaxed(&rb->head);
     size_t current_tail = atomic_load_acquire(&rb->tail);
-    size_t next_head = (current_head + 1U) & rb->mask;
 
-    if (next_head == current_tail) {
-        return false; /* Buffer is full */
+    size_t free_space = rb->mask - ((current_head - current_tail) & rb->mask);
+    size_t to_write = (count < free_space) ? count : free_space;
+
+    if (to_write == 0U) {
+        return 0U;
     }
 
-    rb->buffer[current_head] = data;
+    size_t capacity = rb->mask + 1U;
+    size_t first_chunk = capacity - current_head;
+    if (first_chunk > to_write) {
+        first_chunk = to_write;
+    }
 
+    (void)memcpy(&rb->buffer[current_head], data, first_chunk);
+
+    size_t second_chunk = to_write - first_chunk;
+    if (second_chunk > 0U) {
+        (void)memcpy(&rb->buffer[0], &data[first_chunk], second_chunk);
+    }
+
+    size_t next_head = (current_head + to_write) & rb->mask;
     atomic_store_release(&rb->head, next_head);
 
-    return true;
+    return to_write;
 }
 
-bool ring_buffer_pop(RingBuffer* rb, uint8_t* data)
+size_t ring_buffer_read(RingBuffer* rb, uint8_t* data, size_t count)
 {
-    if ((rb == NULL) || (data == NULL)) {
-        return false;
-    }
-
-    size_t current_head = atomic_load_acquire(&rb->head);
-    size_t current_tail = atomic_load_acquire(&rb->tail);
-
-    if (current_head == current_tail) {
-        return false; /* Buffer is empty */
-    }
-
-    *data = rb->buffer[current_tail];
-
-    atomic_store_release(&rb->tail, (current_tail + 1U) & rb->mask);
-
-    return true;
-}
-
-bool ring_buffer_is_empty(const RingBuffer* rb)
-{
-    if (rb == NULL) {
-        return true;
-    }
-
-    return (atomic_load_acquire(&rb->head) == atomic_load_acquire(&rb->tail));
-}
-
-bool ring_buffer_is_full(const RingBuffer* rb)
-{
-    if (rb == NULL) {
-        return false;
-    }
-
-    size_t current_head = atomic_load_acquire(&rb->head);
-    size_t current_tail = atomic_load_acquire(&rb->tail);
-
-    return (((current_head + 1U) & rb->mask) == current_tail);
-}
-
-size_t ring_buffer_count(const RingBuffer* rb)
-{
-    if (rb == NULL) {
+    if ((rb == NULL) || (data == NULL) || (count == 0U)) {
         return 0U;
     }
 
     size_t current_head = atomic_load_acquire(&rb->head);
-    size_t current_tail = atomic_load_acquire(&rb->tail);
+    size_t current_tail = atomic_load_relaxed(&rb->tail);
 
-    return ((current_head - current_tail) & rb->mask);
-}
+    size_t available = (current_head - current_tail) & rb->mask;
+    size_t to_read = (count < available) ? count : available;
 
-size_t ring_buffer_capacity(const RingBuffer* rb)
-{
-    if (rb == NULL) {
+    if (to_read == 0U) {
         return 0U;
     }
 
-    return rb->mask;
+    size_t capacity = rb->mask + 1U;
+    size_t first_chunk = capacity - current_tail;
+    if (first_chunk > to_read) {
+        first_chunk = to_read;
+    }
+
+    (void)memcpy(data, &rb->buffer[current_tail], first_chunk);
+
+    size_t second_chunk = to_read - first_chunk;
+    if (second_chunk > 0U) {
+        (void)memcpy(&data[first_chunk], &rb->buffer[0], second_chunk);
+    }
+
+    size_t next_tail = (current_tail + to_read) & rb->mask;
+    atomic_store_release(&rb->tail, next_tail);
+
+    return to_read;
 }
 
 void ring_buffer_clear(RingBuffer* rb)
